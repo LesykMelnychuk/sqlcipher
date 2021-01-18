@@ -50,6 +50,7 @@ array set ::Configs [strip_comments {
     -O2
     --disable-amalgamation --disable-shared
     --enable-session
+    -DSQLITE_ENABLE_DESERIALIZE
   }
   "Sanitize" {
     CC=clang -fsanitize=undefined
@@ -79,6 +80,10 @@ array set ::Configs [strip_comments {
     -DSQLITE_ENABLE_UNLOCK_NOTIFY
     -DSQLITE_THREADSAFE
     -DSQLITE_TCL_DEFAULT_FULLMUTEX=1
+  }
+  "User-Auth" {
+    -O2
+    -DSQLITE_USER_AUTHENTICATION=1
   }
   "Secure-Delete" {
     -O2
@@ -114,7 +119,7 @@ array set ::Configs [strip_comments {
   }
   "Debug-One" {
     --disable-shared
-    -O2
+    -O2 -funsigned-char
     -DSQLITE_DEBUG=1
     -DSQLITE_MEMDEBUG=1
     -DSQLITE_MUTEX_NOOP=1
@@ -126,6 +131,8 @@ array set ::Configs [strip_comments {
     -DSQLITE_ENABLE_STAT4
     -DSQLITE_ENABLE_HIDDEN_COLUMNS
     -DSQLITE_MAX_ATTACHED=125
+    -DSQLITE_MUTATION_TEST
+    --enable-fts5 --enable-json1
   }
   "Fast-One" {
     -O6
@@ -172,6 +179,7 @@ array set ::Configs [strip_comments {
     -DSQLITE_OMIT_TRACE=1
     -DSQLITE_TEMP_STORE=3
     -DSQLITE_THREADSAFE=2
+    -DSQLITE_ENABLE_DESERIALIZE=1
     --enable-json1 --enable-fts5 --enable-session
   }
   "Locking-Style" {
@@ -265,14 +273,15 @@ array set ::Configs [strip_comments {
 array set ::Platforms [strip_comments {
   Linux-x86_64 {
     "Check-Symbols"           checksymbols
-    "Fast-One"                fuzztest
+    "Fast-One"                "fuzztest test"
     "Debug-One"               "mptest test"
     "Have-Not"                test
     "Secure-Delete"           test
     "Unlock-Notify"           "QUICKTEST_INCLUDE=notify2.test test"
+    "User-Auth"               tcltest
     "Update-Delete-Limit"     test
     "Extra-Robustness"        test
-    "Device-Two"              test
+    "Device-Two"              "threadtest test"
     "No-lookaside"            test
     "Devkit"                  test
     "Apple"                   test
@@ -403,6 +412,8 @@ proc count_tests_and_errors {logfile rcVar errmsgVar} {
       # skip over "value is outside range" errors
       if {[regexp {value .* is outside the range of representable} $line]} {
          # noop
+      } elseif {[regexp {overflow: .* cannot be represented} $line]} {
+         # noop
       } else {
         incr ::NERRCASE
         if {$rc==0} {
@@ -492,7 +503,26 @@ proc run_slave_test {} {
       unset -nocomplain savedEnv(TCLSH_CMD)
     }
     set ::env(TCLSH_CMD) [file nativename [info nameofexecutable]]
-    set rc [catch [makeCommand $testtarget $makeOpts $cflags $opts]]
+
+    # Create a file called "makecommand.sh" containing the text of
+    # the make command line.
+    catch {
+      set cmd [makeCommand $testtarget $makeOpts $cflags $opts]
+      set fd [open makecommand.sh w]
+      foreach e $cmd { 
+        if {[string first " " $e]>=0} {
+          puts -nonewline $fd "\"$e\""
+        } else {
+          puts -nonewline $fd $e
+        }
+        puts -nonewline $fd " "
+      }
+      puts $fd ""
+      close $fd
+    } msg
+
+    # Run the make command.
+    set rc [catch {trace_cmd exec {*}$cmd >>& test.log} msg]
     if {[info exists savedEnv(TCLSH_CMD)]} {
       set ::env(TCLSH_CMD) $savedEnv(TCLSH_CMD)
     } else {
@@ -728,11 +758,14 @@ proc configureCommand {opts} {
 # specified targets, compiler flags, and options.
 #
 proc makeCommand { targets makeOpts cflags opts } {
-  set result [list trace_cmd exec]
+  set result [list]
   if {$::MSVC} {
     set nmakeDir [file nativename $::SRCDIR]
     set nmakeFile [file nativename [file join $nmakeDir Makefile.msc]]
     lappend result nmake /f $nmakeFile TOP=$nmakeDir
+    set tclDir [file nativename [file normalize \
+        [file dirname [file dirname [info nameofexecutable]]]]]
+    lappend result "TCLDIR=$tclDir"
     if {[regexp {USE_STDCALL=1} $cflags]} {
       lappend result USE_STDCALL=1
     }
@@ -746,7 +779,7 @@ proc makeCommand { targets makeOpts cflags opts } {
   foreach target $targets {
     lappend result $target
   }
-  lappend result CFLAGS=$cflags OPTS=$opts >>& test.log
+  lappend result CFLAGS=$cflags OPTS=$opts
 }
 
 # The following procedure prints its arguments if ::TRACE is true.

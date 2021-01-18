@@ -112,7 +112,7 @@ static Btree *findBtree(sqlite3 *pErrorDb, sqlite3 *pDb, const char *zDb){
 */
 static int setDestPgsz(sqlite3_backup *p){
   int rc;
-  rc = sqlite3BtreeSetPageSize(p->pDest,sqlite3BtreeGetPageSize(p->pSrc),-1,0);
+  rc = sqlite3BtreeSetPageSize(p->pDest,sqlite3BtreeGetPageSize(p->pSrc),0,0);
   return rc;
 }
 
@@ -152,6 +152,27 @@ sqlite3_backup *sqlite3_backup_init(
     return 0;
   }
 #endif
+
+/* BEGIN SQLCIPHER */
+#ifdef SQLITE_HAS_CODEC
+  {
+    extern int sqlcipher_find_db_index(sqlite3*, const char*);
+    extern void sqlite3CodecGetKey(sqlite3*, int, void**, int*);
+    int srcNKey, destNKey;
+    void *zKey;
+
+    sqlite3CodecGetKey(pSrcDb, sqlcipher_find_db_index(pSrcDb, zSrcDb), &zKey, &srcNKey);
+    sqlite3CodecGetKey(pDestDb, sqlcipher_find_db_index(pDestDb, zDestDb), &zKey, &destNKey);
+    zKey = NULL;
+
+    /* either both databases must be plaintext, or both must be encrypted */
+    if((srcNKey == 0 && destNKey > 0) || (srcNKey > 0 && destNKey == 0)) {
+      sqlite3ErrorWithMsg(pDestDb, SQLITE_ERROR, "backup is not supported with encrypted databases");
+      return NULL;
+    }
+  }
+#endif
+/* END SQLCIPHER */
 
   /* Lock the source database handle. The destination database
   ** handle is not locked in this routine, but it is locked in
@@ -235,13 +256,15 @@ static int backupOnePage(
   int nDestPgsz = sqlite3BtreeGetPageSize(p->pDest);
   const int nCopy = MIN(nSrcPgsz, nDestPgsz);
   const i64 iEnd = (i64)iSrcPg*(i64)nSrcPgsz;
+/* BEGIN SQLCIPHER */
 #ifdef SQLITE_HAS_CODEC
   /* Use BtreeGetReserveNoMutex() for the source b-tree, as although it is
   ** guaranteed that the shared-mutex is held by this thread, handle
   ** p->pSrc may not actually be the owner.  */
   int nSrcReserve = sqlite3BtreeGetReserveNoMutex(p->pSrc);
-  int nDestReserve = sqlite3BtreeGetOptimalReserve(p->pDest);
+  int nDestReserve = sqlite3BtreeGetRequestedReserve(p->pDest);
 #endif
+/* END SQLCIPHER */
   int rc = SQLITE_OK;
   i64 iOff;
 
@@ -258,6 +281,7 @@ static int backupOnePage(
     rc = SQLITE_READONLY;
   }
 
+/* BEGIN SQLCIPHER */
 #ifdef SQLITE_HAS_CODEC
   /* Backup is not possible if the page size of the destination is changing
   ** and a codec is in use.
@@ -274,9 +298,10 @@ static int backupOnePage(
   if( nSrcReserve!=nDestReserve ){
     u32 newPgsz = nSrcPgsz;
     rc = sqlite3PagerSetPagesize(pDestPager, &newPgsz, nSrcReserve);
-    if( rc==SQLITE_OK && newPgsz!=nSrcPgsz ) rc = SQLITE_READONLY;
+    if( rc==SQLITE_OK && newPgsz!=(u32)nSrcPgsz ) rc = SQLITE_READONLY;
   }
 #endif
+/* END SQLCIPHER */
 
   /* This loop runs once for each destination page spanned by the source 
   ** page. For each iteration, variable iOff is set to the byte offset
@@ -382,7 +407,7 @@ int sqlite3_backup_step(sqlite3_backup *p, int nPage){
     ** before this function exits.
     */
     if( rc==SQLITE_OK && 0==sqlite3BtreeIsInReadTrans(p->pSrc) ){
-      rc = sqlite3BtreeBeginTrans(p->pSrc, 0);
+      rc = sqlite3BtreeBeginTrans(p->pSrc, 0, 0);
       bCloseTrans = 1;
     }
 
@@ -398,10 +423,10 @@ int sqlite3_backup_step(sqlite3_backup *p, int nPage){
 
     /* Lock the destination database, if it is not locked already. */
     if( SQLITE_OK==rc && p->bDestLocked==0
-     && SQLITE_OK==(rc = sqlite3BtreeBeginTrans(p->pDest, 2)) 
+     && SQLITE_OK==(rc = sqlite3BtreeBeginTrans(p->pDest, 2,
+                                                (int*)&p->iDestSchema)) 
     ){
       p->bDestLocked = 1;
-      sqlite3BtreeGetMeta(p->pDest, BTREE_SCHEMA_VERSION, &p->iDestSchema);
     }
 
     /* Do not allow backup if the destination database is in WAL mode
@@ -619,8 +644,10 @@ int sqlite3_backup_finish(sqlite3_backup *p){
   }
   if( p->isAttached ){
     pp = sqlite3PagerBackupPtr(sqlite3BtreePager(p->pSrc));
+    assert( pp!=0 );
     while( *pp!=p ){
       pp = &(*pp)->pNext;
+      assert( pp!=0 );
     }
     *pp = p->pNext;
   }
@@ -771,9 +798,11 @@ int sqlite3BtreeCopyFile(Btree *pTo, Btree *pFrom){
   b.pDest = pTo;
   b.iNext = 1;
 
+/* BEGIN SQLCIPHER */
 #ifdef SQLITE_HAS_CODEC
   sqlite3PagerAlignReserve(sqlite3BtreePager(pTo), sqlite3BtreePager(pFrom));
 #endif
+/* END SQLCIPHER */
 
   /* 0x7FFFFFFF is the hard limit for the number of pages in a database
   ** file. By passing this as the number of pages to copy to

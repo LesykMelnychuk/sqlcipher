@@ -27,6 +27,21 @@ SQLITE_EXTENSION_INIT1
 ** seven bits per integer stored in the lower seven bits of each byte.
 ** More significant bits occur first.  The most significant bit (0x80)
 ** is a flag to indicate the end of the integer.
+**
+** This function, SQLAR, and ZIP all use the same "deflate" compression
+** algorithm, but each is subtly different:
+**
+**   *  ZIP uses raw deflate.
+**
+**   *  SQLAR uses the "zlib format" which is raw deflate with a two-byte
+**      algorithm-identification header and a four-byte checksum at the end.
+**
+**   *  This utility uses the "zlib format" like SQLAR, but adds the variable-
+**      length integer uncompressed size value at the beginning.
+**
+** This function might be extended in the future to support compression
+** formats other than deflate, by providing a different algorithm-id
+** mark following the variable-length integer size parameter.
 */
 static void compressFunc(
   sqlite3_context *context,
@@ -104,11 +119,13 @@ int sqlite3_compress_init(
   int rc = SQLITE_OK;
   SQLITE_EXTENSION_INIT2(pApi);
   (void)pzErrMsg;  /* Unused parameter */
-  rc = sqlite3_create_function(db, "compress", 1, SQLITE_UTF8, 0,
-                               compressFunc, 0, 0);
+  rc = sqlite3_create_function(db, "compress", 1, 
+                    SQLITE_UTF8 | SQLITE_INNOCUOUS,
+                    0, compressFunc, 0, 0);
   if( rc==SQLITE_OK ){
-    rc = sqlite3_create_function(db, "uncompress", 1, SQLITE_UTF8, 0,
-                                 uncompressFunc, 0, 0);
+    rc = sqlite3_create_function(db, "uncompress", 1,
+                    SQLITE_UTF8 | SQLITE_INNOCUOUS | SQLITE_DETERMINISTIC,
+                    0, uncompressFunc, 0, 0);
   }
   return rc;
 }

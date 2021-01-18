@@ -19,11 +19,11 @@
 
 #include "sqliteInt.h"
 
-/* Additional values that can be added to the sync_flags argument of
-** sqlite3WalFrames():
+/* Macros for extracting appropriate sync flags for either transaction
+** commits (WAL_SYNC_FLAGS(X)) or for checkpoint ops (CKPT_SYNC_FLAGS(X)):
 */
-#define WAL_SYNC_TRANSACTIONS  0x20   /* Sync at the end of each transaction */
-#define SQLITE_SYNC_MASK       0x13   /* Mask off the SQLITE_SYNC_* values */
+#define WAL_SYNC_FLAGS(X)   ((X)&0x03)
+#define CKPT_SYNC_FLAGS(X)  (((X)>>2)&0x03)
 
 #ifdef SQLITE_OMIT_WAL
 # define sqlite3WalOpen(x,y,z)                   0
@@ -132,6 +132,8 @@ int sqlite3WalHeapMemory(Wal *pWal);
 int sqlite3WalSnapshotGet(Wal *pWal, sqlite3_snapshot **ppSnapshot);
 void sqlite3WalSnapshotOpen(Wal *pWal, sqlite3_snapshot *pSnapshot);
 int sqlite3WalSnapshotRecover(Wal *pWal);
+int sqlite3WalSnapshotCheck(Wal *pWal, sqlite3_snapshot *pSnapshot);
+void sqlite3WalSnapshotUnlock(Wal *pWal);
 #endif
 
 #ifdef SQLITE_ENABLE_ZIPVFS
@@ -143,6 +145,11 @@ int sqlite3WalFramesize(Wal *pWal);
 
 /* Return the sqlite3_file object for the WAL file */
 sqlite3_file *sqlite3WalFile(Wal *pWal);
+
+#ifdef SQLITE_ENABLE_SETLK_TIMEOUT
+int sqlite3WalWriteLock(Wal *pWal, int bLock);
+void sqlite3WalDb(Wal *pWal, sqlite3 *db);
+#endif
 
 #endif /* ifndef SQLITE_OMIT_WAL */
 #endif /* SQLITE_WAL_H */

@@ -87,7 +87,6 @@ const unsigned char sqlite3UpperToLower[] = {
 ** non-ASCII UTF character. Hence the test for whether or not a character is
 ** part of an identifier is 0x46.
 */
-#ifdef SQLITE_ASCII
 const unsigned char sqlite3CtypeMap[256] = {
   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  /* 00..07    ........ */
   0x00, 0x01, 0x01, 0x01, 0x01, 0x01, 0x00, 0x00,  /* 08..0f    ........ */
@@ -125,7 +124,6 @@ const unsigned char sqlite3CtypeMap[256] = {
   0x40, 0x40, 0x40, 0x40, 0x40, 0x40, 0x40, 0x40,  /* f0..f7    ........ */
   0x40, 0x40, 0x40, 0x40, 0x40, 0x40, 0x40, 0x40   /* f8..ff    ........ */
 };
-#endif
 
 /* EVIDENCE-OF: R-02982-34736 In order to maintain full backwards
 ** compatibility for legacy applications, the URI filename capability is
@@ -142,19 +140,28 @@ const unsigned char sqlite3CtypeMap[256] = {
 ** enabled.
 */
 #ifndef SQLITE_USE_URI
+/* BEGIN SQLCIPHER */
 # ifdef SQLITE_HAS_CODEC
 #  define SQLITE_USE_URI 1
 # else
 #  define SQLITE_USE_URI 0
 # endif
+/* END SQLCIPHER */
 #endif
 
 /* EVIDENCE-OF: R-38720-18127 The default setting is determined by the
 ** SQLITE_ALLOW_COVERING_INDEX_SCAN compile-time option, or is "on" if
 ** that compile-time option is omitted.
 */
-#ifndef SQLITE_ALLOW_COVERING_INDEX_SCAN
+#if !defined(SQLITE_ALLOW_COVERING_INDEX_SCAN)
 # define SQLITE_ALLOW_COVERING_INDEX_SCAN 1
+#else
+# if !SQLITE_ALLOW_COVERING_INDEX_SCAN 
+#   error "Compile-time disabling of covering index scan using the\
+ -DSQLITE_ALLOW_COVERING_INDEX_SCAN=0 option is deprecated.\
+ Contact SQLite developers if this is a problem for you, and\
+ delete this #error macro to continue with your build."
+# endif
 #endif
 
 /* The minimum PMA size is set to this value multiplied by the database
@@ -183,11 +190,27 @@ const unsigned char sqlite3CtypeMap[256] = {
 ** changed as start-time using sqlite3_config(SQLITE_CONFIG_LOOKASIDE)
 ** or at run-time for an individual database connection using
 ** sqlite3_db_config(db, SQLITE_DBCONFIG_LOOKASIDE);
+**
+** With the two-size-lookaside enhancement, less lookaside is required.
+** The default configuration of 1200,40 actually provides 30 1200-byte slots
+** and 93 128-byte slots, which is more lookaside than is available
+** using the older 1200,100 configuration without two-size-lookaside.
 */
 #ifndef SQLITE_DEFAULT_LOOKASIDE
-# define SQLITE_DEFAULT_LOOKASIDE 1200,100
+# ifdef SQLITE_OMIT_TWOSIZE_LOOKASIDE
+#   define SQLITE_DEFAULT_LOOKASIDE 1200,100  /* 120KB of memory */
+# else
+#   define SQLITE_DEFAULT_LOOKASIDE 1200,40   /* 48KB of memory */
+# endif
 #endif
 
+
+/* The default maximum size of an in-memory database created using
+** sqlite3_deserialize()
+*/
+#ifndef SQLITE_MEMDB_DEFAULT_MAXSIZE
+# define SQLITE_MEMDB_DEFAULT_MAXSIZE 1073741824
+#endif
 
 /*
 ** The following singleton contains the global configuration for
@@ -199,6 +222,8 @@ SQLITE_WSD struct Sqlite3Config sqlite3Config = {
    SQLITE_THREADSAFE==1,      /* bFullMutex */
    SQLITE_USE_URI,            /* bOpenUri */
    SQLITE_ALLOW_COVERING_INDEX_SCAN,   /* bUseCis */
+   0,                         /* bSmallMalloc */
+   1,                         /* bExtraSchemaChecks */
    0x7ffffffe,                /* mxStrlen */
    0,                         /* neverCorrupt */
    SQLITE_DEFAULT_LOOKASIDE,  /* szLookaside, nLookaside */
@@ -211,9 +236,6 @@ SQLITE_WSD struct Sqlite3Config sqlite3Config = {
    0, 0,                      /* mnHeap, mxHeap */
    SQLITE_DEFAULT_MMAP_SIZE,  /* szMmap */
    SQLITE_MAX_MMAP_SIZE,      /* mxMmap */
-   (void*)0,                  /* pScratch */
-   0,                         /* szScratch */
-   0,                         /* nScratch */
    (void*)0,                  /* pPage */
    0,                         /* szPage */
    SQLITE_DEFAULT_PCACHE_INITSZ, /* nPage */
@@ -238,11 +260,16 @@ SQLITE_WSD struct Sqlite3Config sqlite3Config = {
    0,                         /* xVdbeBranch */
    0,                         /* pVbeBranchArg */
 #endif
+#ifdef SQLITE_ENABLE_DESERIALIZE
+   SQLITE_MEMDB_DEFAULT_MAXSIZE,   /* mxMemdbSize */
+#endif
 #ifndef SQLITE_UNTESTABLE
    0,                         /* xTestCallback */
 #endif
    0,                         /* bLocaltimeFault */
-   0x7ffffffe                 /* iOnceResetThreshold */
+   0x7ffffffe,                /* iOnceResetThreshold */
+   SQLITE_DEFAULT_SORTERREF_SIZE,   /* szSorterRef */
+   0,                         /* iPrngSeed */
 };
 
 /*
@@ -252,14 +279,13 @@ SQLITE_WSD struct Sqlite3Config sqlite3Config = {
 */
 FuncDefHash sqlite3BuiltinFunctions;
 
+#ifdef VDBE_PROFILE
 /*
-** Constant tokens for values 0 and 1.
+** The following performance counter can be used in place of
+** sqlite3Hwtime() for profiling.  This is a no-op on standard builds.
 */
-const Token sqlite3IntTokens[] = {
-   { "0", 1 },
-   { "1", 1 }
-};
-
+sqlite3_uint64 sqlite3NProfileCnt = 0;
+#endif
 
 /*
 ** The value of the "pending" byte must be 0x40000000 (1 byte past the
@@ -282,6 +308,11 @@ const Token sqlite3IntTokens[] = {
 #ifndef SQLITE_OMIT_WSD
 int sqlite3PendingByte = 0x40000000;
 #endif
+
+/*
+** Flags for select tracing and the ".selecttrace" macro of the CLI
+*/
+u32 sqlite3_unsupported_selecttrace = 0;
 
 #include "opcodes.h"
 /*

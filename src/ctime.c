@@ -14,7 +14,7 @@
 ** SQLite was built with.
 */
 
-#ifndef SQLITE_OMIT_COMPILEOPTION_DIAGS
+#ifndef SQLITE_OMIT_COMPILEOPTION_DIAGS /* IMP: R-16824-07538 */
 
 /*
 ** Include the configuration header output by 'configure' if we're using the
@@ -29,6 +29,12 @@
 ** for those options in which the value is meaningful. */
 #define CTIMEOPT_VAL_(opt) #opt
 #define CTIMEOPT_VAL(opt) CTIMEOPT_VAL_(opt)
+
+/* Like CTIMEOPT_VAL, but especially for SQLITE_DEFAULT_LOOKASIDE. This
+** option requires a separate macro because legal values contain a single
+** comma. e.g. (-DSQLITE_DEFAULT_LOOKASIDE="100,100") */
+#define CTIMEOPT_VAL2_(opt1,opt2) #opt1 "," #opt2
+#define CTIMEOPT_VAL2(opt) CTIMEOPT_VAL2_(opt)
 
 /*
 ** An array of names of all compile-time options.  This array should 
@@ -113,7 +119,7 @@ static const char * const sqlite3azCompileOpt[] = {
   "DEFAULT_LOCKING_MODE=" CTIMEOPT_VAL(SQLITE_DEFAULT_LOCKING_MODE),
 #endif
 #ifdef SQLITE_DEFAULT_LOOKASIDE
-  "DEFAULT_LOOKASIDE=" CTIMEOPT_VAL(SQLITE_DEFAULT_LOOKASIDE),
+  "DEFAULT_LOOKASIDE=" CTIMEOPT_VAL2(SQLITE_DEFAULT_LOOKASIDE),
 #endif
 #if SQLITE_DEFAULT_MEMSTATUS
   "DEFAULT_MEMSTATUS",
@@ -184,8 +190,14 @@ static const char * const sqlite3azCompileOpt[] = {
 #if SQLITE_ENABLE_ATOMIC_WRITE
   "ENABLE_ATOMIC_WRITE",
 #endif
+#if SQLITE_ENABLE_BATCH_ATOMIC_WRITE
+  "ENABLE_BATCH_ATOMIC_WRITE",
+#endif
+#if SQLITE_ENABLE_BYTECODE_VTAB
+  "ENABLE_BYTECODE_VTAB",
+#endif
 #if SQLITE_ENABLE_CEROD
-  "ENABLE_CEROD",
+  "ENABLE_CEROD=" CTIMEOPT_VAL(SQLITE_ENABLE_CEROD),
 #endif
 #if SQLITE_ENABLE_COLUMN_METADATA
   "ENABLE_COLUMN_METADATA",
@@ -226,6 +238,9 @@ static const char * const sqlite3azCompileOpt[] = {
 #if SQLITE_ENABLE_FTS5
   "ENABLE_FTS5",
 #endif
+#if SQLITE_ENABLE_GEOPOLY
+  "ENABLE_GEOPOLY",
+#endif
 #if SQLITE_ENABLE_HIDDEN_COLUMNS
   "ENABLE_HIDDEN_COLUMNS",
 #endif
@@ -256,6 +271,9 @@ static const char * const sqlite3azCompileOpt[] = {
 #if SQLITE_ENABLE_MULTIPLEX
   "ENABLE_MULTIPLEX",
 #endif
+#if SQLITE_ENABLE_NORMALIZE
+  "ENABLE_NORMALIZE",
+#endif
 #if SQLITE_ENABLE_NULL_TRIM
   "ENABLE_NULL_TRIM",
 #endif
@@ -283,13 +301,14 @@ static const char * const sqlite3azCompileOpt[] = {
 #if SQLITE_ENABLE_SNAPSHOT
   "ENABLE_SNAPSHOT",
 #endif
+#if SQLITE_ENABLE_SORTER_REFERENCES
+  "ENABLE_SORTER_REFERENCES",
+#endif
 #if SQLITE_ENABLE_SQLLOG
   "ENABLE_SQLLOG",
 #endif
 #if defined(SQLITE_ENABLE_STAT4)
   "ENABLE_STAT4",
-#elif defined(SQLITE_ENABLE_STAT3)
-  "ENABLE_STAT3",
 #endif
 #if SQLITE_ENABLE_STMTVTAB
   "ENABLE_STMTVTAB",
@@ -339,9 +358,11 @@ static const char * const sqlite3azCompileOpt[] = {
 #if SQLITE_FTS5_NO_WITHOUT_ROWID
   "FTS5_NO_WITHOUT_ROWID",
 #endif
+/* BEGIN SQLCIPHER */
 #if SQLITE_HAS_CODEC
   "HAS_CODEC",
 #endif
+/* END SQLCIPHER */
 #if HAVE_ISNAN || SQLITE_HAVE_ISNAN
   "HAVE_ISNAN",
 #endif
@@ -497,9 +518,6 @@ static const char * const sqlite3azCompileOpt[] = {
 #endif
 #if SQLITE_OMIT_BLOB_LITERAL
   "OMIT_BLOB_LITERAL",
-#endif
-#if SQLITE_OMIT_BTREECOUNT
-  "OMIT_BTREECOUNT",
 #endif
 #if SQLITE_OMIT_CAST
   "OMIT_CAST",

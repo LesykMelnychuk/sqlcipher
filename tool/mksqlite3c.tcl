@@ -101,6 +101,7 @@ foreach hdr {
    fts3Int.h
    fts3_hash.h
    fts3_tokenizer.h
+   geopoly.c
    hash.h
    hwtime.h
    keywordhash.h
@@ -184,7 +185,7 @@ proc copy_file {filename} {
   }
   set declpattern ^$declpattern\$
   while {![eof $in]} {
-    set line [gets $in]
+    set line [string trimright [gets $in]]
     incr ln
     if {[regexp {^\s*#\s*include\s+["<]([^">]+)[">]} $line all hdr]} {
       if {[info exists available_hdr($hdr)]} {
@@ -226,6 +227,8 @@ proc copy_file {filename} {
       if {![info exists varonly_hdr($tail)]
        && [regexp $declpattern $line all rettype funcname rest]} {
         regsub {^SQLITE_API } $line {} line
+        regsub {^SQLITE_API } $rettype {} rettype
+
         # Add the SQLITE_PRIVATE or SQLITE_API keyword before functions.
         # so that linkage can be modified at compile-time.
         if {[regexp {^sqlite3[a-z]*_} $funcname]} {
@@ -242,7 +245,13 @@ proc copy_file {filename} {
             }
           }
           append line $funcname $rest
-          puts $out $line
+          if {$funcname=="sqlite3_sourceid" && !$linemacros} {
+            # The sqlite3_sourceid() routine is synthesized at the end of
+            # the amalgamation
+            puts $out "/* $line */"
+          } else {
+            puts $out $line
+          }
         } else {
           puts $out "SQLITE_PRIVATE $line"
         }
@@ -291,6 +300,7 @@ foreach file {
    crypto.c
    crypto_impl.c
    crypto_libtomcrypt.c
+   crypto_nss.c
    crypto_openssl.c
    crypto_cc.c
 
@@ -321,6 +331,7 @@ foreach file {
 
    os_unix.c
    os_win.c
+   memdb.c
 
    bitvec.c
    pcache.c
@@ -340,6 +351,7 @@ foreach file {
    vdbe.c
    vdbeblob.c
    vdbesort.c
+   vdbevtab.c
    memjournal.c
 
    walker.c
@@ -363,11 +375,13 @@ foreach file {
    table.c
    trigger.c
    update.c
+   upsert.c
    vacuum.c
    vtab.c
    wherecode.c
    whereexpr.c
    where.c
+   window.c
 
    parse.c
 
@@ -390,18 +404,49 @@ foreach file {
    fts3_unicode.c
    fts3_unicode2.c
 
+   json1.c
    rtree.c
    icu.c
 
    fts3_icu.c
    sqlite3rbu.c
    dbstat.c
+   dbpage.c
    sqlite3session.c
-   json1.c
    fts5.c
    stmt.c
 } {
   copy_file tsrc/$file
 }
+
+# Synthesize an alternative sqlite3_sourceid() implementation that
+# that tries to detects changes in the amalgamation source text
+# and modify returns a modified source-id if changes are detected.
+#
+# The only detection mechanism we have is the __LINE__ macro.  So only
+# edits that changes the number of lines of source code are detected.
+#
+if {!$linemacros} {
+  flush $out
+  set in2 [open sqlite3.c]
+  set cnt 0
+  set oldsrcid {}
+  while {![eof $in2]} {
+    incr cnt
+    gets $in2 line
+    if {[regexp {^#define SQLITE_SOURCE_ID } $line]} {set oldsrcid $line}
+  }
+  close $in2
+  regsub {[0-9a-flt]{4}"} $oldsrcid {alt2"} oldsrcid
+  puts $out \
+"#if __LINE__!=[expr {$cnt+0}]
+#undef SQLITE_SOURCE_ID
+$oldsrcid
+#endif
+/* Return the source-id for this library */
+SQLITE_API const char *sqlite3_sourceid(void){ return SQLITE_SOURCE_ID; }"
+}
+puts $out \
+"/************************** End of sqlite3.c ******************************/"
 
 close $out

@@ -341,7 +341,7 @@ static int echoDeclareVtab(
   if( pVtab->zTableName ){
     sqlite3_stmt *pStmt = 0;
     rc = sqlite3_prepare(db, 
-        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+        "SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = ?",
         -1, &pStmt, 0);
     if( rc==SQLITE_OK ){
       sqlite3_bind_text(pStmt, 1, pVtab->zTableName, -1, 0);
@@ -897,17 +897,18 @@ static int echoBestIndex(sqlite3_vtab *tab, sqlite3_index_info *pIdxInfo){
         case SQLITE_INDEX_CONSTRAINT_REGEXP:
           zOp = "regexp"; break;
       }
-      if( zOp[0]=='L' ){
-        zNew = sqlite3_mprintf(" %s %s LIKE (SELECT '%%'||?||'%%')", 
-                               zSep, zNewCol);
-      } else {
-        zNew = sqlite3_mprintf(" %s %s %s ?", zSep, zNewCol, zOp);
+      if( zOp ){
+        if( zOp[0]=='L' ){
+          zNew = sqlite3_mprintf(" %s %s LIKE (SELECT '%%'||?||'%%')", 
+              zSep, zNewCol);
+        } else {
+          zNew = sqlite3_mprintf(" %s %s %s ?", zSep, zNewCol, zOp);
+        }
+        string_concat(&zQuery, zNew, 1, &rc);
+        zSep = "AND";
+        pUsage->argvIndex = ++nArg;
+        pUsage->omit = 1;
       }
-      string_concat(&zQuery, zNew, 1, &rc);
-
-      zSep = "AND";
-      pUsage->argvIndex = ++nArg;
-      pUsage->omit = 1;
     }
   }
 

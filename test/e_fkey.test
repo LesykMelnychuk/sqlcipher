@@ -24,7 +24,24 @@
 set testdir [file dirname $argv0]
 source $testdir/tester.tcl
 
-proc eqp {sql {db db}} { uplevel execsql [list "EXPLAIN QUERY PLAN $sql"] $db }
+proc eqp {sql {db db}} { 
+  uplevel [subst -nocommands {
+    set eqpres [list]
+    $db eval "$sql" {
+      lappend eqpres [set detail]
+    }
+    set eqpres
+  }]
+}
+
+proc do_detail_test {tn sql res} {
+  set normalres [list {*}$res]
+  uplevel [subst -nocommands {
+    do_test $tn {
+      eqp { $sql }
+    } {$normalres}
+  }]
+}
 
 ###########################################################################
 ### SECTION 2: Enabling Foreign Key Support
@@ -970,20 +987,20 @@ do_test e_fkey-25.1 {
     );
   }
 } {}
-do_execsql_test e_fkey-25.2 {
+do_detail_test e_fkey-25.2 {
   PRAGMA foreign_keys = OFF;
   EXPLAIN QUERY PLAN DELETE FROM artist WHERE 1;
   EXPLAIN QUERY PLAN SELECT rowid FROM track WHERE trackartist = ?;
 } {
-  0 0 0 {SCAN TABLE artist} 
-  0 0 0 {SCAN TABLE track}
+  {SCAN TABLE artist} 
+  {SCAN TABLE track}
 }
-do_execsql_test e_fkey-25.3 {
+do_detail_test e_fkey-25.3 {
   PRAGMA foreign_keys = ON;
   EXPLAIN QUERY PLAN DELETE FROM artist WHERE 1;
 } {
-  0 0 0 {SCAN TABLE artist} 
-  0 0 0 {SCAN TABLE track}
+  {SCAN TABLE artist} 
+  {SCAN TABLE track}
 }
 do_test e_fkey-25.4 {
   execsql {
@@ -1097,20 +1114,19 @@ do_test e_fkey-27.1 {
 do_test e_fkey-27.2 {
   eqp { INSERT INTO artist VALUES(?, ?) }
 } {}
-do_execsql_test e_fkey-27.3 {
+do_detail_test e_fkey-27.3 {
   EXPLAIN QUERY PLAN UPDATE artist SET artistid = ?, artistname = ?
 } {
-  0 0 0 {SCAN TABLE artist} 
-  0 0 0 {SEARCH TABLE track USING COVERING INDEX trackindex (trackartist=?)} 
-  0 0 0 {SEARCH TABLE track USING COVERING INDEX trackindex (trackartist=?)}
+  {SCAN TABLE artist} 
+  {SEARCH TABLE track USING COVERING INDEX trackindex (trackartist=?)} 
+  {SEARCH TABLE track USING COVERING INDEX trackindex (trackartist=?)}
 }
-do_execsql_test e_fkey-27.4 {
+do_detail_test e_fkey-27.4 {
   EXPLAIN QUERY PLAN DELETE FROM artist
 } {
-  0 0 0 {SCAN TABLE artist} 
-  0 0 0 {SEARCH TABLE track USING COVERING INDEX trackindex (trackartist=?)}
+  {SCAN TABLE artist} 
+  {SEARCH TABLE track USING COVERING INDEX trackindex (trackartist=?)}
 }
-
 
 ###########################################################################
 ### SECTION 4.1: Composite Foreign Key Constraints
@@ -2491,7 +2507,7 @@ proc test_efkey_6 {tn zAlter isError} {
   drop_all_tables 
 
   do_test e_fkey-56.$tn.1 "
-    execsql { CREATE TABLE tbl(a, b) }
+    execsql { CREATE TABLE tbl(a, b); INSERT INTO tbl VALUES(1, 2); }
     [list catchsql $zAlter]
   " [lindex {{0 {}} {1 {Cannot add a REFERENCES column with non-NULL default value}}} $isError]
 
@@ -2512,8 +2528,8 @@ test_efkey_6 3 "ALTER TABLE tbl ADD COLUMN c DEFAULT 0 REFERENCES xx" 1
 #
 # Test that these adjustments are visible in the sqlite_master table.
 #
-# EVIDENCE-OF: R-63827-54774 The text of the child CREATE TABLE
-# statement or statements stored in the sqlite_master table are modified
+# EVIDENCE-OF: R-43040-62530 The text of the child CREATE TABLE
+# statement or statements stored in the sqlite_schema table are modified
 # to reflect the new parent table name.
 #
 do_test e_fkey-56.1 {
@@ -2755,7 +2771,7 @@ do_test e_fkey-60.6 {
 #
 do_test e_fkey-61.1.1 {
   drop_all_tables
-  execsql { CREATE TABLE t1(a, b) }
+  execsql { CREATE TABLE t1(a, b) ; INSERT INTO t1 VALUES(1, 2) }
   catchsql { ALTER TABLE t1 ADD COLUMN c DEFAULT 'xxx' REFERENCES t2 }
 } {1 {Cannot add a REFERENCES column with non-NULL default value}}
 do_test e_fkey-61.1.2 {
@@ -2781,12 +2797,14 @@ do_test e_fkey-61.2.1 {
 do_test e_fkey-61.2.2 {
   execsql {
     PRAGMA foreign_keys = OFF;
+    PRAGMA legacy_alter_table = ON;
     ALTER TABLE p RENAME TO parent;
     SELECT sql FROM sqlite_master WHERE name = 'c';
   }
 } {{CREATE TABLE c(b REFERENCES p(a))}}
 do_test e_fkey-61.2.3 {
   execsql { PRAGMA foreign_keys = ON }
+  execsql { PRAGMA legacy_alter_table = OFF }
 } {}
 
 do_test e_fkey-61.3.1 {

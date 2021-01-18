@@ -37,86 +37,93 @@
 
 #define FORTUNA_MAX_SZ 32
 static prng_state prng;
-static unsigned int ltc_init = 0;
-static unsigned int ltc_ref_count = 0;
-static sqlite3_mutex* ltc_rand_mutex = NULL;
+static volatile unsigned int ltc_init = 0;
+static volatile unsigned int ltc_ref_count = 0;
+
+#define LTC_CIPHER "rijndael"
 
 static int sqlcipher_ltc_add_random(void *ctx, void *buffer, int length) {
   int rc = 0;
   int data_to_read = length;
   int block_sz = data_to_read < FORTUNA_MAX_SZ ? data_to_read : FORTUNA_MAX_SZ;
   const unsigned char * data = (const unsigned char *)buffer;
-#ifndef SQLCIPHER_LTC_NO_MUTEX_RAND
-  sqlite3_mutex_enter(ltc_rand_mutex);
-#endif
-    while(data_to_read > 0){
-      rc = fortuna_add_entropy(data, block_sz, &prng);
-      rc = rc != CRYPT_OK ? SQLITE_ERROR : SQLITE_OK;
-      if(rc != SQLITE_OK){
-        break;
-      }
-      data_to_read -= block_sz;
-      data += block_sz;
-      block_sz = data_to_read < FORTUNA_MAX_SZ ? data_to_read : FORTUNA_MAX_SZ;
+
+  CODEC_TRACE_MUTEX("sqlcipher_ltc_add_random: entering SQLCIPHER_MUTEX_PROVIDER_RAND\n");
+  sqlite3_mutex_enter(sqlcipher_mutex(SQLCIPHER_MUTEX_PROVIDER_RAND));
+  CODEC_TRACE_MUTEX("sqlcipher_ltc_add_random: entered SQLCIPHER_MUTEX_PROVIDER_RAND\n");
+
+  while(data_to_read > 0){
+    rc = fortuna_add_entropy(data, block_sz, &prng);
+    rc = rc != CRYPT_OK ? SQLITE_ERROR : SQLITE_OK;
+    if(rc != SQLITE_OK){
+      break;
     }
-    fortuna_ready(&prng);
-#ifndef SQLCIPHER_LTC_NO_MUTEX_RAND
-  sqlite3_mutex_leave(ltc_rand_mutex);
-#endif
+    data_to_read -= block_sz;
+    data += block_sz;
+    block_sz = data_to_read < FORTUNA_MAX_SZ ? data_to_read : FORTUNA_MAX_SZ;
+  }
+  fortuna_ready(&prng);
+
+  CODEC_TRACE_MUTEX("sqlcipher_ltc_add_random: leaving SQLCIPHER_MUTEX_PROVIDER_RAND\n");
+  sqlite3_mutex_leave(sqlcipher_mutex(SQLCIPHER_MUTEX_PROVIDER_RAND));
+  CODEC_TRACE_MUTEX("sqlcipher_ltc_add_random: left SQLCIPHER_MUTEX_PROVIDER_RAND\n");
+
   return rc;
 }
 
 static int sqlcipher_ltc_activate(void *ctx) {
   unsigned char random_buffer[FORTUNA_MAX_SZ];
-#ifndef SQLCIPHER_LTC_NO_MUTEX_RAND
-  if(ltc_rand_mutex == NULL){
-    ltc_rand_mutex = sqlite3_mutex_alloc(SQLITE_MUTEX_FAST);
-  }
-  sqlite3_mutex_enter(ltc_rand_mutex);
-#endif
+
+  CODEC_TRACE_MUTEX("sqlcipher_ltc_activate: entering SQLCIPHER_MUTEX_PROVIDER_ACTIVATE\n");
+  sqlite3_mutex_enter(sqlcipher_mutex(SQLCIPHER_MUTEX_PROVIDER_ACTIVATE));
+  CODEC_TRACE_MUTEX("sqlcipher_ltc_activate: entered SQLCIPHER_MUTEX_PROVIDER_ACTIVATE\n");
+
   sqlcipher_memset(random_buffer, 0, FORTUNA_MAX_SZ);
   if(ltc_init == 0) {
-    if(register_prng(&fortuna_desc) != CRYPT_OK) return SQLITE_ERROR;
-    if(register_cipher(&rijndael_desc) != CRYPT_OK) return SQLITE_ERROR;
-    if(register_hash(&sha1_desc) != CRYPT_OK) return SQLITE_ERROR;
+    if(register_prng(&fortuna_desc) < 0) return SQLITE_ERROR;
+    if(register_cipher(&rijndael_desc) < 0) return SQLITE_ERROR;
+    if(register_hash(&sha512_desc) < 0) return SQLITE_ERROR;
+    if(register_hash(&sha256_desc) < 0) return SQLITE_ERROR;
+    if(register_hash(&sha1_desc) < 0) return SQLITE_ERROR;
     if(fortuna_start(&prng) != CRYPT_OK) {
       return SQLITE_ERROR;
     }
+
     ltc_init = 1;
   }
   ltc_ref_count++;
+
 #ifndef SQLCIPHER_TEST
   sqlite3_randomness(FORTUNA_MAX_SZ, random_buffer);
 #endif
-#ifndef SQLCIPHER_LTC_NO_MUTEX_RAND
-  sqlite3_mutex_leave(ltc_rand_mutex);
-#endif
+
   if(sqlcipher_ltc_add_random(ctx, random_buffer, FORTUNA_MAX_SZ) != SQLITE_OK) {
     return SQLITE_ERROR;
   }
   sqlcipher_memset(random_buffer, 0, FORTUNA_MAX_SZ);
+
+  CODEC_TRACE_MUTEX("sqlcipher_ltc_activate: leaving SQLCIPHER_MUTEX_PROVIDER_ACTIVATE\n");
+  sqlite3_mutex_leave(sqlcipher_mutex(SQLCIPHER_MUTEX_PROVIDER_ACTIVATE));
+  CODEC_TRACE_MUTEX("sqlcipher_ltc_activate: left SQLCIPHER_MUTEX_PROVIDER_ACTIVATE\n");
+
   return SQLITE_OK;
 }
 
 static int sqlcipher_ltc_deactivate(void *ctx) {
-#ifndef SQLCIPHER_LTC_NO_MUTEX_RAND
-  sqlite3_mutex_enter(ltc_rand_mutex);
-#endif
+  CODEC_TRACE_MUTEX("sqlcipher_ltc_deactivate: entering SQLCIPHER_MUTEX_PROVIDER_ACTIVATE\n");
+  sqlite3_mutex_enter(sqlcipher_mutex(SQLCIPHER_MUTEX_PROVIDER_ACTIVATE));
+  CODEC_TRACE_MUTEX("sqlcipher_ltc_deactivate: entered SQLCIPHER_MUTEX_PROVIDER_ACTIVATE\n");
+
   ltc_ref_count--;
   if(ltc_ref_count == 0){
     fortuna_done(&prng);
     sqlcipher_memset((void *)&prng, 0, sizeof(prng));
-#ifndef SQLCIPHER_LTC_NO_MUTEX_RAND
-    sqlite3_mutex_leave(ltc_rand_mutex);
-    sqlite3_mutex_free(ltc_rand_mutex);
-    ltc_rand_mutex = NULL;
-#endif
   }
-#ifndef SQLCIPHER_LTC_NO_MUTEX_RAND
-  else {
-    sqlite3_mutex_leave(ltc_rand_mutex);
-  }
-#endif    
+
+  CODEC_TRACE_MUTEX("sqlcipher_ltc_deactivate: leaving SQLCIPHER_MUTEX_PROVIDER_ACTIVATE\n");
+  sqlite3_mutex_leave(sqlcipher_mutex(SQLCIPHER_MUTEX_PROVIDER_ACTIVATE));
+  CODEC_TRACE_MUTEX("sqlcipher_ltc_deactivate: left SQLCIPHER_MUTEX_PROVIDER_ACTIVATE\n");
+
   return SQLITE_OK;
 }
 
@@ -129,22 +136,40 @@ static const char* sqlcipher_ltc_get_provider_version(void *ctx) {
 }
 
 static int sqlcipher_ltc_random(void *ctx, void *buffer, int length) {
-#ifndef SQLCIPHER_LTC_NO_MUTEX_RAND
-  sqlite3_mutex_enter(ltc_rand_mutex);
-#endif
+  CODEC_TRACE_MUTEX("sqlcipher_ltc_random: entering SQLCIPHER_MUTEX_PROVIDER_RAND\n");
+  sqlite3_mutex_enter(sqlcipher_mutex(SQLCIPHER_MUTEX_PROVIDER_RAND));
+  CODEC_TRACE_MUTEX("sqlcipher_ltc_random: entered SQLCIPHER_MUTEX_PROVIDER_RAND\n");
+
   fortuna_read(buffer, length, &prng);
-#ifndef SQLCIPHER_LTC_NO_MUTEX_RAND
-  sqlite3_mutex_leave(ltc_rand_mutex);
-#endif
+
+  CODEC_TRACE_MUTEX("sqlcipher_ltc_random: leaving SQLCIPHER_MUTEX_PROVIDER_RAND\n");
+  sqlite3_mutex_leave(sqlcipher_mutex(SQLCIPHER_MUTEX_PROVIDER_RAND));
+  CODEC_TRACE_MUTEX("sqlcipher_ltc_random: left SQLCIPHER_MUTEX_PROVIDER_RAND\n");
+
   return SQLITE_OK;
 }
 
-static int sqlcipher_ltc_hmac(void *ctx, unsigned char *hmac_key, int key_sz, unsigned char *in, int in_sz, unsigned char *in2, int in2_sz, unsigned char *out) {
+static int sqlcipher_ltc_hmac(void *ctx, int algorithm, unsigned char *hmac_key, int key_sz, unsigned char *in, int in_sz, unsigned char *in2, int in2_sz, unsigned char *out) {
   int rc, hash_idx;
   hmac_state hmac;
-  unsigned long outlen = key_sz;
+  unsigned long outlen;
+  switch(algorithm) {
+    case SQLCIPHER_HMAC_SHA1:
+      hash_idx = find_hash("sha1");
+      break;
+    case SQLCIPHER_HMAC_SHA256:
+      hash_idx = find_hash("sha256");
+      break;
+    case SQLCIPHER_HMAC_SHA512:
+      hash_idx = find_hash("sha512");
+      break;
+    default:
+      return SQLITE_ERROR;
+  }
 
-  hash_idx = find_hash("sha1");
+  if(hash_idx < 0) return SQLITE_ERROR;
+  outlen = hash_descriptor[hash_idx].hashsize;
+
   if(in == NULL) return SQLITE_ERROR;
   if((rc = hmac_init(&hmac, hash_idx, hmac_key, key_sz)) != CRYPT_OK) return SQLITE_ERROR;
   if((rc = hmac_process(&hmac, in, in_sz)) != CRYPT_OK) return SQLITE_ERROR;
@@ -153,36 +178,41 @@ static int sqlcipher_ltc_hmac(void *ctx, unsigned char *hmac_key, int key_sz, un
   return SQLITE_OK;
 }
 
-static int sqlcipher_ltc_kdf(void *ctx, const unsigned char *pass, int pass_sz, unsigned char* salt, int salt_sz, int workfactor, int key_sz, unsigned char *key) {
+static int sqlcipher_ltc_kdf(void *ctx, int algorithm, const unsigned char *pass, int pass_sz, unsigned char* salt, int salt_sz, int workfactor, int key_sz, unsigned char *key) {
   int rc, hash_idx;
   unsigned long outlen = key_sz;
-  unsigned long random_buffer_sz = sizeof(char) * 256;
-  unsigned char *random_buffer = sqlcipher_malloc(random_buffer_sz);
-  sqlcipher_memset(random_buffer, 0, random_buffer_sz);
 
-  hash_idx = find_hash("sha1");
+  switch(algorithm) {
+    case SQLCIPHER_HMAC_SHA1:
+      hash_idx = find_hash("sha1");
+      break;
+    case SQLCIPHER_HMAC_SHA256:
+      hash_idx = find_hash("sha256");
+      break;
+    case SQLCIPHER_HMAC_SHA512:
+      hash_idx = find_hash("sha512");
+      break;
+    default:
+      return SQLITE_ERROR;
+  }
+  if(hash_idx < 0) return SQLITE_ERROR;
+
   if((rc = pkcs_5_alg2(pass, pass_sz, salt, salt_sz,
                        workfactor, hash_idx, key, &outlen)) != CRYPT_OK) {
     return SQLITE_ERROR;
   }
-  if((rc = pkcs_5_alg2(key, key_sz, salt, salt_sz,
-                       1, hash_idx, random_buffer, &random_buffer_sz)) != CRYPT_OK) {
-    return SQLITE_ERROR;
-  }
-  sqlcipher_ltc_add_random(ctx, random_buffer, random_buffer_sz);
-  sqlcipher_free(random_buffer, random_buffer_sz);
   return SQLITE_OK;
 }
 
 static const char* sqlcipher_ltc_get_cipher(void *ctx) {
-  return "rijndael";
+  return "aes-256-cbc";
 }
 
 static int sqlcipher_ltc_cipher(void *ctx, int mode, unsigned char *key, int key_sz, unsigned char *iv, unsigned char *in, int in_sz, unsigned char *out) {
   int rc, cipher_idx;
   symmetric_CBC cbc;
 
-  if((cipher_idx = find_cipher(sqlcipher_ltc_get_cipher(ctx))) == -1) return SQLITE_ERROR;
+  if((cipher_idx = find_cipher(LTC_CIPHER)) == -1) return SQLITE_ERROR;
   if((rc = cbc_start(cipher_idx, iv, key, key_sz, 0, &cbc)) != CRYPT_OK) return SQLITE_ERROR;
   rc = mode == 1 ? cbc_encrypt(in, out, in_sz, &cbc) : cbc_decrypt(in, out, in_sz, &cbc);
   if(rc != CRYPT_OK) return SQLITE_ERROR;
@@ -190,36 +220,40 @@ static int sqlcipher_ltc_cipher(void *ctx, int mode, unsigned char *key, int key
   return SQLITE_OK;
 }
 
-static int sqlcipher_ltc_set_cipher(void *ctx, const char *cipher_name) {
-  return SQLITE_OK;
-}
-
 static int sqlcipher_ltc_get_key_sz(void *ctx) {
-  int cipher_idx = find_cipher(sqlcipher_ltc_get_cipher(ctx));
+  int cipher_idx = find_cipher(LTC_CIPHER);
   return cipher_descriptor[cipher_idx].max_key_length;
 }
 
 static int sqlcipher_ltc_get_iv_sz(void *ctx) {
-  int cipher_idx = find_cipher(sqlcipher_ltc_get_cipher(ctx));
+  int cipher_idx = find_cipher(LTC_CIPHER);
   return cipher_descriptor[cipher_idx].block_length;
 }
 
 static int sqlcipher_ltc_get_block_sz(void *ctx) {
-  int cipher_idx = find_cipher(sqlcipher_ltc_get_cipher(ctx));
+  int cipher_idx = find_cipher(LTC_CIPHER);
   return cipher_descriptor[cipher_idx].block_length;
 }
 
-static int sqlcipher_ltc_get_hmac_sz(void *ctx) {
-  int hash_idx = find_hash("sha1");
+static int sqlcipher_ltc_get_hmac_sz(void *ctx, int algorithm) {
+  int hash_idx;
+  switch(algorithm) {
+    case SQLCIPHER_HMAC_SHA1:
+      hash_idx = find_hash("sha1");
+      break;
+    case SQLCIPHER_HMAC_SHA256:
+      hash_idx = find_hash("sha256");
+      break;
+    case SQLCIPHER_HMAC_SHA512:
+      hash_idx = find_hash("sha512");
+      break;
+    default:
+      return 0;
+  }
+
+  if(hash_idx < 0) return 0;
+
   return hash_descriptor[hash_idx].hashsize;
-}
-
-static int sqlcipher_ltc_ctx_copy(void *target_ctx, void *source_ctx) {
-  return SQLITE_OK;
-}
-
-static int sqlcipher_ltc_ctx_cmp(void *c1, void *c2) {
-  return 1;
 }
 
 static int sqlcipher_ltc_ctx_init(void **ctx) {
@@ -244,14 +278,11 @@ int sqlcipher_ltc_setup(sqlcipher_provider *p) {
   p->hmac = sqlcipher_ltc_hmac;
   p->kdf = sqlcipher_ltc_kdf;
   p->cipher = sqlcipher_ltc_cipher;
-  p->set_cipher = sqlcipher_ltc_set_cipher;
   p->get_cipher = sqlcipher_ltc_get_cipher;
   p->get_key_sz = sqlcipher_ltc_get_key_sz;
   p->get_iv_sz = sqlcipher_ltc_get_iv_sz;
   p->get_block_sz = sqlcipher_ltc_get_block_sz;
   p->get_hmac_sz = sqlcipher_ltc_get_hmac_sz;
-  p->ctx_copy = sqlcipher_ltc_ctx_copy;
-  p->ctx_cmp = sqlcipher_ltc_ctx_cmp;
   p->ctx_init = sqlcipher_ltc_ctx_init;
   p->ctx_free = sqlcipher_ltc_ctx_free;
   p->add_random = sqlcipher_ltc_add_random;

@@ -61,6 +61,11 @@ typedef sqlite3_uint64 u64;
 */
 #define FTS5_MAX_PREFIX_INDEXES 31
 
+/*
+** Maximum segments permitted in a single index 
+*/
+#define FTS5_MAX_SEGMENT 2000
+
 #define FTS5_DEFAULT_NEARDIST 10
 #define FTS5_DEFAULT_RANK     "bm25"
 
@@ -86,6 +91,12 @@ extern int sqlite3_fts5_may_be_corrupt;
 #else
 # define assert_nc(x) assert(x)
 #endif
+
+/*
+** A version of memcmp() that does not cause asan errors if one of the pointer
+** parameters is NULL and the number of bytes to compare is zero.
+*/
+#define fts5Memcmp(s1, s2, n) ((n)==0 ? 0 : memcmp((s1), (s2), (n)))
 
 /* Mark a function parameter as unused, to suppress nuisance compiler
 ** warnings. */
@@ -172,6 +183,7 @@ struct Fts5Config {
   char *zContentExprlist;
   Fts5Tokenizer *pTok;
   fts5_tokenizer *pTokApi;
+  int bLock;                      /* True when table is preparing statement */
 
   /* Values loaded from the %_config table */
   int iCookie;                    /* Incremented when %_config is modified */
@@ -274,7 +286,7 @@ void sqlite3Fts5Put32(u8*, int);
 int sqlite3Fts5Get32(const u8*);
 
 #define FTS5_POS2COLUMN(iPos) (int)(iPos >> 32)
-#define FTS5_POS2OFFSET(iPos) (int)(iPos & 0xFFFFFFFF)
+#define FTS5_POS2OFFSET(iPos) (int)(iPos & 0x7FFFFFFF)
 
 typedef struct Fts5PoslistReader Fts5PoslistReader;
 struct Fts5PoslistReader {
@@ -309,7 +321,7 @@ int sqlite3Fts5PoslistNext64(
 );
 
 /* Malloc utility */
-void *sqlite3Fts5MallocZero(int *pRc, int nByte);
+void *sqlite3Fts5MallocZero(int *pRc, sqlite3_int64 nByte);
 char *sqlite3Fts5Strndup(int *pRc, const char *pIn, int nIn);
 
 /* Character set tests (like isspace(), isalpha() etc.) */
@@ -409,6 +421,11 @@ int sqlite3Fts5IterNextFrom(Fts5IndexIter*, i64 iMatch);
 ** Close an iterator opened by sqlite3Fts5IndexQuery().
 */
 void sqlite3Fts5IterClose(Fts5IndexIter*);
+
+/*
+** Close the reader blob handle, if it is open.
+*/
+void sqlite3Fts5IndexCloseReader(Fts5Index*);
 
 /*
 ** This interface is used by the fts5vocab module.
@@ -520,8 +537,18 @@ int sqlite3Fts5PutVarint(unsigned char *p, u64 v);
 
 
 /**************************************************************************
-** Interface to code in fts5.c. 
+** Interface to code in fts5_main.c. 
 */
+
+/*
+** Virtual-table object.
+*/
+typedef struct Fts5Table Fts5Table;
+struct Fts5Table {
+  sqlite3_vtab base;              /* Base class used by SQLite core */
+  Fts5Config *pConfig;            /* Virtual table configuration */
+  Fts5Index *pIndex;              /* Full-text index */
+};
 
 int sqlite3Fts5GetTokenizer(
   Fts5Global*, 
@@ -532,7 +559,9 @@ int sqlite3Fts5GetTokenizer(
   char **pzErr
 );
 
-Fts5Index *sqlite3Fts5IndexFromCsrid(Fts5Global*, i64, Fts5Config **);
+Fts5Table *sqlite3Fts5TableFromCsrid(Fts5Global*, i64);
+
+int sqlite3Fts5FlushToDisk(Fts5Table*);
 
 /*
 ** End of interface to code in fts5.c.
@@ -565,8 +594,9 @@ void sqlite3Fts5HashClear(Fts5Hash*);
 
 int sqlite3Fts5HashQuery(
   Fts5Hash*,                      /* Hash table to query */
+  int nPre,
   const char *pTerm, int nTerm,   /* Query term */
-  const u8 **ppDoclist,           /* OUT: Pointer to doclist for pTerm */
+  void **ppObj,                   /* OUT: Pointer to doclist for pTerm */
   int *pnDoclist                  /* OUT: Size of doclist in bytes */
 );
 
@@ -675,6 +705,7 @@ int sqlite3Fts5ExprEof(Fts5Expr*);
 i64 sqlite3Fts5ExprRowid(Fts5Expr*);
 
 void sqlite3Fts5ExprFree(Fts5Expr*);
+int sqlite3Fts5ExprAnd(Fts5Expr **pp1, Fts5Expr *p2);
 
 /* Called during startup to register a UDF with SQLite */
 int sqlite3Fts5ExprInit(Fts5Global*, sqlite3*);
@@ -721,6 +752,8 @@ Fts5ExprPhrase *sqlite3Fts5ParseTerm(
   Fts5Token *pToken,
   int bPrefix
 );
+
+void sqlite3Fts5ParseSetCaret(Fts5ExprPhrase*);
 
 Fts5ExprNearset *sqlite3Fts5ParseNearset(
   Fts5Parse*, 
@@ -782,9 +815,12 @@ int sqlite3Fts5VocabInit(Fts5Global*, sqlite3*);
 /**************************************************************************
 ** Interface to automatically generated code in fts5_unicode2.c. 
 */
-int sqlite3Fts5UnicodeIsalnum(int c);
 int sqlite3Fts5UnicodeIsdiacritic(int c);
 int sqlite3Fts5UnicodeFold(int c, int bRemoveDiacritic);
+
+int sqlite3Fts5UnicodeCatParse(const char*, u8*);
+int sqlite3Fts5UnicodeCategory(u32 iCode);
+void sqlite3Fts5UnicodeAscii(u8*, u8*);
 /*
 ** End of interface to code in fts5_unicode2.c.
 **************************************************************************/

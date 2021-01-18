@@ -68,4 +68,54 @@ ifcapable incrblob {
   } {SQLITE_CONSTRAINT}
 }
 
+ifcapable stat4 {
+  do_execsql_test 3.0 {
+    CREATE TABLE p4 (id INTEGER NOT NULL PRIMARY KEY);
+    INSERT INTO p4 VALUES(1), (2), (3);
+
+    CREATE TABLE c4(x INTEGER REFERENCES p4(id) DEFERRABLE INITIALLY DEFERRED);
+    CREATE INDEX c4_x ON c4(x);
+    INSERT INTO c4 VALUES(1), (2), (3);
+
+    ANALYZE;
+    INSERT INTO p4(id) VALUES(4);
+  }
+}
+
+
+do_execsql_test 4.0 {
+  PRAGMA foreign_keys = true;
+  CREATE TABLE parent(
+    p PRIMARY KEY
+  );
+  CREATE TABLE child(
+    c UNIQUE REFERENCES parent(p)
+  );
+}
+
+do_catchsql_test 4.1 {
+  INSERT OR FAIL INTO child VALUES(123), (123);
+} {1 {FOREIGN KEY constraint failed}}
+
+do_execsql_test 4.2 {
+  SELECT * FROM child;
+} {}
+
+do_execsql_test 4.3 {
+  PRAGMA foreign_key_check;
+} {}
+
+do_catchsql_test 4.4 {
+  INSERT INTO parent VALUES(123);
+  INSERT OR FAIL INTO child VALUES(123), (123);
+} {1 {UNIQUE constraint failed: child.c}}
+
+do_execsql_test 4.5 {
+  SELECT * FROM child;
+} {123}
+
+do_execsql_test 4.6 {
+  PRAGMA foreign_key_check;
+} {}
+
 finish_test

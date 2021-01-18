@@ -71,20 +71,20 @@ int sqlite3BtreeSetSpillSize(Btree*,int);
 int sqlite3BtreeSetPagerFlags(Btree*,unsigned);
 int sqlite3BtreeSetPageSize(Btree *p, int nPagesize, int nReserve, int eFix);
 int sqlite3BtreeGetPageSize(Btree*);
-int sqlite3BtreeMaxPageCount(Btree*,int);
-u32 sqlite3BtreeLastPage(Btree*);
+Pgno sqlite3BtreeMaxPageCount(Btree*,Pgno);
+Pgno sqlite3BtreeLastPage(Btree*);
 int sqlite3BtreeSecureDelete(Btree*,int);
-int sqlite3BtreeGetOptimalReserve(Btree*);
+int sqlite3BtreeGetRequestedReserve(Btree*);
 int sqlite3BtreeGetReserveNoMutex(Btree *p);
 int sqlite3BtreeSetAutoVacuum(Btree *, int);
 int sqlite3BtreeGetAutoVacuum(Btree *);
-int sqlite3BtreeBeginTrans(Btree*,int);
-int sqlite3BtreeCommitPhaseOne(Btree*, const char *zMaster);
+int sqlite3BtreeBeginTrans(Btree*,int,int*);
+int sqlite3BtreeCommitPhaseOne(Btree*, const char*);
 int sqlite3BtreeCommitPhaseTwo(Btree*, int);
 int sqlite3BtreeCommit(Btree*);
 int sqlite3BtreeRollback(Btree*,int,int);
 int sqlite3BtreeBeginStmt(Btree*,int);
-int sqlite3BtreeCreateTable(Btree*, int*, int flags);
+int sqlite3BtreeCreateTable(Btree*, Pgno*, int flags);
 int sqlite3BtreeIsInTrans(Btree*);
 int sqlite3BtreeIsInReadTrans(Btree*);
 int sqlite3BtreeIsInBackup(Btree*);
@@ -225,11 +225,12 @@ int sqlite3BtreeNewDb(Btree *p);
 
 int sqlite3BtreeCursor(
   Btree*,                              /* BTree containing table to open */
-  int iTable,                          /* Index of root page */
+  Pgno iTable,                         /* Index of root page */
   int wrFlag,                          /* 1 for writing.  0 for read-only */
   struct KeyInfo*,                     /* First argument to compare function */
   BtCursor *pCursor                    /* Space to write cursor structure */
 );
+BtCursor *sqlite3BtreeFakeValidCursor(void);
 int sqlite3BtreeCursorSize(void);
 void sqlite3BtreeCursorZero(BtCursor*);
 void sqlite3BtreeCursorHintFlags(BtCursor*, unsigned);
@@ -258,13 +259,28 @@ int sqlite3BtreeDelete(BtCursor*, u8 flags);
 ** entry in either an index or table btree.
 **
 ** Index btrees (used for indexes and also WITHOUT ROWID tables) contain
-** an arbitrary key and no data.  These btrees have pKey,nKey set to their
-** key and pData,nData,nZero set to zero.
+** an arbitrary key and no data.  These btrees have pKey,nKey set to the
+** key and the pData,nData,nZero fields are uninitialized.  The aMem,nMem
+** fields give an array of Mem objects that are a decomposition of the key.
+** The nMem field might be zero, indicating that no decomposition is available.
 **
 ** Table btrees (used for rowid tables) contain an integer rowid used as
 ** the key and passed in the nKey field.  The pKey field is zero.  
 ** pData,nData hold the content of the new entry.  nZero extra zero bytes
 ** are appended to the end of the content when constructing the entry.
+** The aMem,nMem fields are uninitialized for table btrees.
+**
+** Field usage summary:
+**
+**               Table BTrees                   Index Btrees
+**
+**   pKey        always NULL                    encoded key
+**   nKey        the ROWID                      length of pKey
+**   pData       data                           not used
+**   aMem        not used                       decomposed key value
+**   nMem        not used                       entries in aMem
+**   nData       length of pData                not used
+**   nZero       extra zeros after pData        not used
 **
 ** This object is used to pass information into sqlite3BtreeInsert().  The
 ** same information used to be passed as five separate parameters.  But placing
@@ -275,7 +291,7 @@ int sqlite3BtreeDelete(BtCursor*, u8 flags);
 struct BtreePayload {
   const void *pKey;       /* Key content for indexes.  NULL for tables */
   sqlite3_int64 nKey;     /* Size of pKey for indexes.  PRIMARY KEY for tabs */
-  const void *pData;      /* Data for tables.  NULL for indexes */
+  const void *pData;      /* Data for tables. */
   sqlite3_value *aMem;    /* First of nMem value in the unpacked pKey */
   u16 nMem;               /* Number of aMem[] value.  Might be zero */
   int nData;              /* Size of pData.  0 if none. */
@@ -290,11 +306,17 @@ int sqlite3BtreeNext(BtCursor*, int flags);
 int sqlite3BtreeEof(BtCursor*);
 int sqlite3BtreePrevious(BtCursor*, int flags);
 i64 sqlite3BtreeIntegerKey(BtCursor*);
+void sqlite3BtreeCursorPin(BtCursor*);
+void sqlite3BtreeCursorUnpin(BtCursor*);
+#ifdef SQLITE_ENABLE_OFFSET_SQL_FUNC
+i64 sqlite3BtreeOffset(BtCursor*);
+#endif
 int sqlite3BtreePayload(BtCursor*, u32 offset, u32 amt, void*);
 const void *sqlite3BtreePayloadFetch(BtCursor*, u32 *pAmt);
 u32 sqlite3BtreePayloadSize(BtCursor*);
+sqlite3_int64 sqlite3BtreeMaxRecordSize(BtCursor*);
 
-char *sqlite3BtreeIntegrityCheck(Btree*, int *aRoot, int nRoot, int, int*);
+char *sqlite3BtreeIntegrityCheck(sqlite3*,Btree*,Pgno*aRoot,int nRoot,int,int*);
 struct Pager *sqlite3BtreePager(Btree*);
 i64 sqlite3BtreeRowCountEst(BtCursor*);
 
@@ -314,9 +336,7 @@ int sqlite3BtreeCursorIsValid(BtCursor*);
 #endif
 int sqlite3BtreeCursorIsValidNN(BtCursor*);
 
-#ifndef SQLITE_OMIT_BTREECOUNT
-int sqlite3BtreeCount(BtCursor *, i64 *);
-#endif
+int sqlite3BtreeCount(sqlite3*, BtCursor*, i64*);
 
 #ifdef SQLITE_TEST
 int sqlite3BtreeCursorInfo(BtCursor*, int*, int);

@@ -2,8 +2,8 @@
 # This script is used to build the amalgamation autoconf package.
 # It assumes the following:
 #
-#   1. The files "sqlite3.c", "sqlite3.h" and "sqlite3ext.h"
-#      are available in the current directory.
+#   1. The files "sqlite3.c", "sqlite3.h", "sqlite3ext.h", "shell.c",
+#      and "sqlite3rc.h" are available in the current directory.
 #
 #   2. Variable $TOP is set to the full path of the root directory
 #      of the SQLite source tree.
@@ -49,9 +49,10 @@ cp -R $TOP/autoconf       $TMPSPACE
 cp sqlite3.c              $TMPSPACE
 cp sqlite3.h              $TMPSPACE
 cp sqlite3ext.h           $TMPSPACE
+cp sqlite3rc.h            $TMPSPACE
 cp $TOP/sqlite3.1         $TMPSPACE
 cp $TOP/sqlite3.pc.in     $TMPSPACE
-cp $TOP/src/shell.c       $TMPSPACE
+cp shell.c                $TMPSPACE
 cp $TOP/src/sqlite3.rc    $TMPSPACE
 cp $TOP/tool/Replace.cs   $TMPSPACE
 

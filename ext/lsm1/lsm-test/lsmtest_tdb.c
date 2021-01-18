@@ -553,7 +553,7 @@ static int sql_begin(TestDb *pTestDb, int iLevel){
   /* If there are no transactions at all open, open a read transaction. */
   if( pDb->nOpenTrans==0 ){
     int rc = sqlite3_exec(pDb->db, 
-        "BEGIN; SELECT * FROM sqlite_master LIMIT 1;" , 0, 0, 0
+        "BEGIN; SELECT * FROM sqlite_schema LIMIT 1;" , 0, 0, 0
     );
     if( rc!=0 ) return rc;
     pDb->nOpenTrans = 1;
@@ -721,6 +721,7 @@ static struct Lib {
   { "sqlite3",      "testdb.sqlite",    sql_open },
   { "lsm_small",    "testdb.lsm_small", test_lsm_small_open },
   { "lsm_lomem",    "testdb.lsm_lomem", test_lsm_lomem_open },
+  { "lsm_lomem2",   "testdb.lsm_lomem2", test_lsm_lomem2_open },
 #ifdef HAVE_ZLIB
   { "lsm_zip",      "testdb.lsm_zip",   test_lsm_zip_open },
 #endif
